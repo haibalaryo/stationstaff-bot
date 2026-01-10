@@ -54,71 +54,95 @@ db.exec(`
 `);
 
 // ========================================
-// 新規ユーザー歓迎ロジック
+// 新規ユーザー歓迎ロジック (v2025対応版)
 // ========================================
 
 async function checkNewUsers() {
+  console.log('--- [Debug] Check started ---');
+
   try {
-    // 1. ユーザーリストを取得（新しい順）
-    // origin: 'local' で自鯖のユーザーのみに限定
+    // 1. ユーザーリストを取得
+    // sort: '-createdAt' (新しい順) を明示的に指定！
     const users = await cli.request('users', {
       limit: 10,
       origin: 'local',
-      state: 'all' 
+      state: 'all',
+      sort: '-createdAt' 
     });
     
-    if (users.length === 0) return;
+    // API取得結果のデバッグ
+    console.log(`[Debug] API returned ${users.length} users.`);
+    if (users.length > 0) {
+        // デバッグ用: 一番新しいユーザーを表示
+        console.log(`[Debug] Newest fetched: ${users[0].id} (@${users[0].username})`);
+    }
+
+    if (users.length === 0) {
+        console.log('[Debug] No users found via API.');
+        return;
+    }
 
     // 2. DBから「最後にチェックしたユーザーID」を取得
     const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_welcome_user_id'").get();
     let lastCheckedUserId = stateRecord ? stateRecord.value : null;
 
+    console.log(`[Debug] Last checked ID in DB: ${lastCheckedUserId}`);
+
     // 3. 初回起動時（DBに記録がない場合）
-    // 現在の最新ユーザーを記録して終了（過去のユーザーに爆撃しないため）
+    // 現在の最新ユーザーを記録して終了（過去ユーザーへの誤爆防止）
     if (!lastCheckedUserId) {
+      console.log(`[Welcome] First run detected! Setting latest ID to: ${users[0].id} (@${users[0].username})`);
       db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
-      console.log(`[Welcome] Initialized! Latest user ID set to: ${users[0].id} (@${users[0].username})`);
       return;
     }
 
     // 4. 未挨拶の新規ユーザーを抽出
     const newUsers = [];
     for (const user of users) {
-      if (user.id === lastCheckedUserId) break;
+      // 既知のIDにぶつかったら、そこから下は全部古いのでループ終了
+      if (user.id === lastCheckedUserId) {
+          console.log(`[Debug] Met known user ID: ${user.id}. Stopping search.`);
+          break;
+      }
       // Bot自身には挨拶しない
-      if (user.id === botUserId) continue;
+      if (user.id === botUserId) {
+          console.log(`[Debug] Skipping myself (@${user.username}).`);
+          continue;
+      }
       newUsers.push(user);
     }
 
-    if (newUsers.length === 0) return;
+    if (newUsers.length === 0) {
+        console.log('[Debug] No NEW users found since last check.');
+        return;
+    }
 
-    console.log(`[Welcome] Found ${newUsers.length} new users!`);
+    console.log(`[Welcome] Found ${newUsers.length} new users! Processing...`);
 
-    // ★今回のチェックで一番新しいIDを確保
+    // ★今回のチェックで一番新しいIDを確保（処理後にDBに入れるため）
     const newestUserId = newUsers[0].id;
 
-    // 5. 古い順（入ってきた順）に投稿するために反転
+    // 5. 古い順（入ってきた順）に投稿するためにリストを反転
+    // APIからは [最新, 準最新...] で来るので、reverseして [準最新, 最新] にする
     newUsers.reverse();
 
     for (const user of newUsers) {
-      // メッセージ内容はここをいじってくれ
-      // ※LogboBotが別に動いている前提で、案内文にはLogboの宣伝を入れてあるぜ
       const welcomeText = `@${user.username} さん、${BOT_HOST} へようこそ！🎉
 
 【はじめての方へ】
 🔰 プロフィールを設定してアイコンを変えてみよう
 🎁 「@loginbonus ログボ」と呟くとログボが貰えます！
-📊 サーバー状況は @stationstaff で確認できます
+📊 サーバー状況は @vnstat で確認できます
 
 困ったことがあれば #質問 タグで聞いてください
 ゆっくりしていってね！`;
 
       try {
-        await cli.request('notes/create', {
+        const res = await cli.request('notes/create', {
           text: welcomeText,
           visibility: 'public'
         });
-        console.log(`[Welcome] Welcomed @${user.username}`);
+        console.log(`[Welcome] Welcomed @${user.username} (NoteID: ${res.createdNote.id})`);
       } catch (e) {
         console.error(`[Welcome] Failed to welcome @${user.username}:`, e);
       }
@@ -140,12 +164,12 @@ async function checkNewUsers() {
 // タイマー設定
 // ----------------------------------------
 
-console.log('[Welcome] Welcome Bot started.');
+console.log('[Welcome] Welcome Bot started (v2025 compliant).');
 
-// 起動10秒後に初回チェック
+// 起動5秒後に初回チェック
 setTimeout(() => {
   checkNewUsers();
-}, 10000);
+}, 5000);
 
 // 5分ごとにチェック
 setInterval(checkNewUsers, 5 * 60 * 1000);
