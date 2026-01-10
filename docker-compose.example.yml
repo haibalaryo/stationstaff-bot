@@ -10,6 +10,8 @@ services:
       - MISSKEY_TOKEN=${MISSKEY_TOKEN}
     volumes:
       - ./data:/app/data
+      # ここにバックアップ先を書くよ
+      - /home/${USER_NAME}/misskey/backups:/mnt/backups:ro
     logging:
       driver: "json-file"
       options:

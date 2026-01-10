@@ -1,13 +1,15 @@
 import * as Misskey from 'misskey-js';
 import Database from 'better-sqlite3';
 import fs from 'fs';
+import path from 'path';
+import cron from 'node-cron'; // ★追加
 import pkg from 'ws';
 
-// WebSocketポリフィル
+// WebSocketのポリフィル（Node環境でMisskey Streamingを使うため）
 const WebSocket = pkg.WebSocket || pkg.default || pkg;
 global.WebSocket = WebSocket;
 
-// 環境変数チェック
+// 環境変数のチェック
 const MISSKEY_URL = process.env.MISSKEY_URL;
 const MISSKEY_TOKEN = process.env.MISSKEY_TOKEN;
 
@@ -19,7 +21,7 @@ if (!MISSKEY_URL || !MISSKEY_TOKEN) {
 const BOT_HOST = new URL(MISSKEY_URL).hostname;
 console.log(`Bot instance host: ${BOT_HOST}`);
 
-// データディレクトリ作成
+// データディレクトリの作成
 if (!fs.existsSync('./data')) {
   try {
     fs.mkdirSync('./data', { recursive: true });
@@ -29,7 +31,7 @@ if (!fs.existsSync('./data')) {
   }
 }
 
-// Misskeyクライアント
+// Misskeyクライアント設定
 const cli = new Misskey.api.APIClient({
   origin: MISSKEY_URL,
   credential: MISSKEY_TOKEN,
@@ -44,7 +46,7 @@ cli.request('i').then((res) => {
   process.exit(1);
 });
 
-// DB初期化
+// SQLiteデータベース設定
 const db = new Database('./data/database.db');
 db.exec(`
   CREATE TABLE IF NOT EXISTS bot_state (
@@ -54,135 +56,236 @@ db.exec(`
 `);
 
 // ========================================
-// 新規ユーザー歓迎ロジック
+// 1. 新規ユーザー歓迎ロジック
 // ========================================
 
 async function checkNewUsers() {
   console.log('--- [Debug] Check started ---');
 
   try {
-    // 1. ユーザーリストを取得
-    // limitを100にして取りこぼしを防ぐ
     const users = await cli.request('users', {
       limit: 100,
       origin: 'local',
       state: 'all'
     });
 
-    // ソート
-    // IDの降順（大きい順）＝ 新しい順 に並び替える
+    // ID順（時系列順）にソート
     users.sort((a, b) => {
-        if (a.id < b.id) return 1;  // aの方が小さい(古い)なら後ろへ
-        if (a.id > b.id) return -1; // aの方が大きい(新しい)なら前へ
-        return 0;
+      if (a.id < b.id) return 1;
+      if (a.id > b.id) return -1;
+      return 0;
     });
 
-    console.log(`[Debug] API returned ${users.length} users.`);
-    
-    if (users.length === 0) {
-      console.log('[Debug] No users found via API.');
-      return;
-    }
-    
-    // デバッグ：一番新しい人を表示
-    console.log(`[Debug] Real Newest User (Sorted): ${users[0].id} (@${users[0].username})`);
+    if (users.length === 0) return;
 
-    // 2. DBから「最後にチェックしたユーザーID」を取得
+    // 前回チェックした最後のユーザーIDを取得
     const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_welcome_user_id'").get();
     let lastCheckedUserId = stateRecord ? stateRecord.value : null;
 
-    console.log(`[Debug] Last checked ID in DB: ${lastCheckedUserId || 'none (first run)'}`);
-
-    // 3. 初回起動時（DBに記録がない場合）
+    // 初回起動時は現在の最新ユーザーを記録して終了（過去の全員に挨拶しないため）
     if (!lastCheckedUserId) {
-      console.log(`[Welcome] First run detected! Setting latest ID to: ${users[0].id} (@${users[0].username})`);
+      console.log(`[Welcome] First run detected! Setting baseline to: ${users[0].id}`);
       db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
       return;
     }
 
-    // 4. 未挨拶の新規ユーザーを抽出
     const newUsers = [];
     for (const user of users) {
-      // origin: 'local' で弾いているはずだが、念のためリモートユーザーを除外
-      if (user.host !== null) {
-        console.log(`[Debug] Skip remote user: @${user.username}@${user.host}`);
-        continue;
-      }
-
-      // 既知のIDにぶつかったら終了
-      if (user.id === lastCheckedUserId) {
-        console.log(`[Debug] Met known user ID: ${user.id}. Stopping search.`);
-        break;
-      }
-      
-      // Bot自身には挨拶しない
-      if (user.id === botUserId) {
-        console.log(`[Debug] Skipping myself (@${user.username}).`);
-        continue;
-      }
+      if (user.host !== null) continue; // リモートユーザーは除外
+      if (user.id === lastCheckedUserId) break; // 前回の場所まで来たら終了
+      if (user.id === botUserId) continue; // 自分自身は除外
       
       newUsers.push(user);
     }
 
     if (newUsers.length === 0) {
-      console.log('[Debug] No NEW users found since last check.');
+      console.log('[Debug] No NEW users found.');
       return;
     }
 
-    console.log(`[Welcome] Found ${newUsers.length} new users! Processing...`);
-
-    // 今回のチェックで一番新しいIDを確保
+    // 古い順に挨拶するために反転
     const newestUserId = newUsers[0].id;
-
-    // 5. 投稿順序を「古い順」にするために反転
     newUsers.reverse();
 
     for (const user of newUsers) {
-      // メッセージ内の案内先を @vnstat に修正
       const welcomeText = `@${user.username} さん、${BOT_HOST} へようこそ！🎉
 
 【はじめての方へ】
 🔰 プロフィールを設定してアイコンを変えてみよう
-🎁 「@loginbonus ログボ」と呟くとログボが貰えます！
-📊 サーバー状況は @stationstaff で確認できます
+🎁 「@loginbonus ログボ」と呟くとログボが貰えるよ！
+📊 サーバー状況は @stationstaff で確認できるよ
 
-困ったことがあれば #質問 タグで聞いてください
+困ったことがあれば #質問 タグで聞いてね！
 ゆっくりしていってね！`;
 
       try {
-        const res = await cli.request('notes/create', {
+        await cli.request('notes/create', {
           text: welcomeText,
           visibility: 'public'
         });
-        console.log(`[Welcome] Welcomed @${user.username} (NoteID: ${res.createdNote.id})`);
+        console.log(`[Welcome] Welcomed @${user.username}`);
       } catch (e) {
         console.error(`[Welcome] Failed to welcome @${user.username}:`, e);
       }
-
-      // 連投制限対策
+      // 連投制限回避のウェイト
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
 
-    // 6. DB更新
+    // 状態更新
     db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', newestUserId);
-    console.log(`[Welcome] State updated. Next check starts from: ${newestUserId}`);
 
   } catch (err) {
     console.error('[Welcome] Error:', err);
-    if (err.stack) console.error(err.stack);
   }
 }
 
+// ========================================
+// 2. 再起動予告通知（毎日1:57）
+// ========================================
+
+async function postRebootNotice() {
+  // 重複防止チェック: 今日すでに予告済みならスキップ
+  const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_reboot_notice_date'").get();
+  // 日本時間の「今日」の日付文字列 (YYYY-MM-DD)
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+
+  if (stateRecord && stateRecord.value === today) {
+    console.log('[Reboot] Already notified today. Skipping.');
+    return;
+  }
+
+  console.log('[Reboot] Posting reboot notice...');
+
+  try {
+    await cli.request('notes/create', {
+      text: `⚠️ **再起動予告** ⚠️
+
+あと3分で再起動をします。
+サーバーにアクセスできなくなりますので、終了までしばしお待ちください。
+
+再起動時刻: 2:00
+予定所要時間: 数分`,
+      visibility: 'public'
+    });
+
+    // 成功したら今日の日付を記録
+    db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_reboot_notice_date', today);
+    console.log('[Reboot] Reboot notice posted successfully.');
+  } catch (err) {
+    console.error('[Reboot] Failed to post reboot notice:', err);
+  }
+}
+
+// ========================================
+// 3. バックアップ完了通知
+// ========================================
+
+// docker-composeでマウントしたパス
+const BACKUP_DIR = '/mnt/backups';
+
+async function checkBackupCompletion() {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) {
+      console.log('[Backup] Backup directory not found.');
+      return;
+    }
+
+    const files = fs.readdirSync(BACKUP_DIR);
+    // .dump で終わるファイルを探し、新しい順にソート
+    const dumpFiles = files.filter(f => f.endsWith('.dump')).sort().reverse();
+
+    if (dumpFiles.length === 0) {
+      return;
+    }
+
+    const latestBackup = dumpFiles[0];
+    const filePath = path.join(BACKUP_DIR, latestBackup);
+    const stats = fs.statSync(filePath);
+    const fileModifiedTime = stats.mtime;
+
+    // 重複防止チェック: 最後に通知したファイルと同じならスキップ
+    const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_notified_backup'").get();
+    const lastNotifiedBackup = stateRecord ? stateRecord.value : null;
+
+    if (lastNotifiedBackup === latestBackup) {
+      return; // 既に通知済み
+    }
+
+    // ファイルが「ここ15分以内」に作成・更新されたかチェック
+    // バックアップ処理に時間がかかる場合もあるので、少し幅を持たせる
+    const now = new Date();
+    const timeDiffMinutes = (now - fileModifiedTime) / 1000 / 60;
+
+    // 15分以内に完了したものだけ通知する（あまり古いファイルを通知しても仕方ないため）
+    if (timeDiffMinutes < 15) {
+      console.log(`[Backup] New backup detected: ${latestBackup}`);
+
+      const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2);
+
+      try {
+        await cli.request('notes/create', {
+          text: `✅ **バックアップ完了**
+
+バックアップに成功しました！
+
+📦 ファイル名: ${latestBackup}，💾 サイズ: ${fileSizeMB} MB，🕐 作成日時: ${fileModifiedTime.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`,
+          visibility: 'public'
+        });
+
+        // 通知済みとして記録
+        db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_notified_backup', latestBackup);
+        console.log('[Backup] Backup completion notice posted successfully.');
+      } catch (err) {
+        console.error('[Backup] Failed to post backup notice:', err);
+      }
+    }
+
+  } catch (err) {
+    console.error('[Backup] Error checking backups:', err);
+  }
+}
+
+// ========================================
+// スケジューラー設定
+// ========================================
+
+function setupScheduledTasks() {
+  console.log('[StationStaff] Setting up scheduled tasks...');
+
+  // 再起動予告：毎日 01:57 (Asia/Tokyo)
+  cron.schedule('57 1 * * *', () => {
+    console.log('[Cron] Reboot notice triggered.');
+    postRebootNotice();
+  }, {
+    timezone: 'Asia/Tokyo'
+  });
+
+  // バックアップチェック：5分ごとに実行
+  // 常に監視して、新しいファイルができたら通知するスタイル
+  cron.schedule('*/5 * * * *', () => {
+    checkBackupCompletion();
+  }, {
+    timezone: 'Asia/Tokyo'
+  });
+
+  console.log('[StationStaff] Scheduled tasks registered.');
+}
+
 // ----------------------------------------
-// タイマー設定
+// 起動処理
 // ----------------------------------------
 
-console.log('[Welcome] Welcome Bot started.');
+console.log('[StationStaff] Bot started.');
 
-// 起動10秒後に初回チェック
-setTimeout(() => {
-  checkNewUsers();
-}, 10000); 
-
-// 5分ごとにチェック
+// 新規ユーザーチェック (起動10秒後、以降5分ごと)
+setTimeout(checkNewUsers, 10000);
 setInterval(checkNewUsers, 5 * 60 * 1000);
+
+// スケジューラー起動
+setupScheduledTasks();
+
+// 起動時にバックアップ状況を一回だけ確認（Botが落ちてた間に終わったやつを拾うため）
+setTimeout(checkBackupCompletion, 8000);
+
+// ★注意: postRebootNoticeは起動時に即実行しない（誤爆防止）
