@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++
 
 # 依存関係をインストール
-COPY package*. json ./
+COPY package*.json ./
 RUN npm install --production
 
 # アプリケーションファイルをコピー
