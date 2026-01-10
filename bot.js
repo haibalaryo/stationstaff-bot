@@ -54,7 +54,7 @@ db.exec(`
 `);
 
 // ========================================
-// 新規ユーザー歓迎ロジック (v2025対応版)
+// 新規ユーザー歓迎ロジック
 // ========================================
 
 async function checkNewUsers() {
@@ -62,34 +62,38 @@ async function checkNewUsers() {
 
   try {
     // 1. ユーザーリストを取得
-    // sort: '-createdAt' (新しい順) を明示的に指定！
+    // limitを100にして取りこぼしを防ぐ
     const users = await cli.request('users', {
-      limit: 10,
+      limit: 100,
       origin: 'local',
-      state: 'all',
-      sort: '-createdAt' 
+      state: 'all'
     });
-    
-    // API取得結果のデバッグ
-    console.log(`[Debug] API returned ${users.length} users.`);
-    if (users.length > 0) {
-        // デバッグ用: 一番新しいユーザーを表示
-        console.log(`[Debug] Newest fetched: ${users[0].id} (@${users[0].username})`);
-    }
 
+    // ソート
+    // IDの降順（大きい順）＝ 新しい順 に並び替える
+    users.sort((a, b) => {
+        if (a.id < b.id) return 1;  // aの方が小さい(古い)なら後ろへ
+        if (a.id > b.id) return -1; // aの方が大きい(新しい)なら前へ
+        return 0;
+    });
+
+    console.log(`[Debug] API returned ${users.length} users.`);
+    
     if (users.length === 0) {
-        console.log('[Debug] No users found via API.');
-        return;
+      console.log('[Debug] No users found via API.');
+      return;
     }
+    
+    // デバッグ：一番新しい人を表示
+    console.log(`[Debug] Real Newest User (Sorted): ${users[0].id} (@${users[0].username})`);
 
     // 2. DBから「最後にチェックしたユーザーID」を取得
     const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_welcome_user_id'").get();
     let lastCheckedUserId = stateRecord ? stateRecord.value : null;
 
-    console.log(`[Debug] Last checked ID in DB: ${lastCheckedUserId}`);
+    console.log(`[Debug] Last checked ID in DB: ${lastCheckedUserId || 'none (first run)'}`);
 
     // 3. 初回起動時（DBに記録がない場合）
-    // 現在の最新ユーザーを記録して終了（過去ユーザーへの誤爆防止）
     if (!lastCheckedUserId) {
       console.log(`[Welcome] First run detected! Setting latest ID to: ${users[0].id} (@${users[0].username})`);
       db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
@@ -99,38 +103,47 @@ async function checkNewUsers() {
     // 4. 未挨拶の新規ユーザーを抽出
     const newUsers = [];
     for (const user of users) {
-      // 既知のIDにぶつかったら、そこから下は全部古いのでループ終了
-      if (user.id === lastCheckedUserId) {
-          console.log(`[Debug] Met known user ID: ${user.id}. Stopping search.`);
-          break;
+      // origin: 'local' で弾いているはずだが、念のためリモートユーザーを除外
+      if (user.host !== null) {
+        console.log(`[Debug] Skip remote user: @${user.username}@${user.host}`);
+        continue;
       }
+
+      // 既知のIDにぶつかったら終了
+      if (user.id === lastCheckedUserId) {
+        console.log(`[Debug] Met known user ID: ${user.id}. Stopping search.`);
+        break;
+      }
+      
       // Bot自身には挨拶しない
       if (user.id === botUserId) {
-          console.log(`[Debug] Skipping myself (@${user.username}).`);
-          continue;
+        console.log(`[Debug] Skipping myself (@${user.username}).`);
+        continue;
       }
+      
       newUsers.push(user);
     }
 
     if (newUsers.length === 0) {
-        console.log('[Debug] No NEW users found since last check.');
-        return;
+      console.log('[Debug] No NEW users found since last check.');
+      return;
     }
 
     console.log(`[Welcome] Found ${newUsers.length} new users! Processing...`);
 
-    // ★今回のチェックで一番新しいIDを確保（処理後にDBに入れるため）
+    // 今回のチェックで一番新しいIDを確保
     const newestUserId = newUsers[0].id;
 
-    // 5. 古い順（入ってきた順）に投稿するためにリストを反転
-    // APIからは [最新, 準最新...] で来るので、reverseして [準最新, 最新] にする
+    // 5. 投稿順序を「古い順」にするために反転
     newUsers.reverse();
 
     for (const user of newUsers) {
+      // メッセージ内の案内先を @vnstat に修正
       const welcomeText = `@${user.username} さん、${BOT_HOST} へようこそ！🎉
 
 【はじめての方へ】
 🔰 プロフィールを設定してアイコンを変えてみよう
+📝 #自己紹介 タグで投稿してみよう
 🎁 「@loginbonus ログボ」と呟くとログボが貰えます！
 📊 サーバー状況は @vnstat で確認できます
 
@@ -147,16 +160,17 @@ async function checkNewUsers() {
         console.error(`[Welcome] Failed to welcome @${user.username}:`, e);
       }
 
-      // 連投制限対策（3秒待機）
+      // 連投制限対策
       await new Promise(resolve => setTimeout(resolve, 3000));
     }
 
-    // 6. 全員への挨拶が終わったらDB更新
+    // 6. DB更新
     db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', newestUserId);
     console.log(`[Welcome] State updated. Next check starts from: ${newestUserId}`);
 
   } catch (err) {
     console.error('[Welcome] Error:', err);
+    if (err.stack) console.error(err.stack);
   }
 }
 
@@ -164,12 +178,12 @@ async function checkNewUsers() {
 // タイマー設定
 // ----------------------------------------
 
-console.log('[Welcome] Welcome Bot started (v2025 compliant).');
+console.log('[Welcome] Welcome Bot started.');
 
-// 起動5秒後に初回チェック
+// 起動10秒後に初回チェック
 setTimeout(() => {
   checkNewUsers();
-}, 5000);
+}, 10000); 
 
 // 5分ごとにチェック
 setInterval(checkNewUsers, 5 * 60 * 1000);
