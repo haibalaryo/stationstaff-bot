@@ -12,6 +12,9 @@ global.WebSocket = WebSocket;
 // 環境変数のチェック
 const MISSKEY_URL = process.env.MISSKEY_URL;
 const MISSKEY_TOKEN = process.env.MISSKEY_TOKEN;
+const USER_TOKEN = process.env.USER_TOKEN;  // おにゃのこはすはす用API
+const NIGHT_IMAGE_ID = process.env.NIGHT_IMAGE_ID;  // おはよう！朝4時になにしてるんだい？
+
 
 if (!MISSKEY_URL || !MISSKEY_TOKEN) {
   console.error('Error: Set MISSKEY_URL and MISSKEY_TOKEN in .env');
@@ -31,11 +34,21 @@ if (!fs.existsSync('./data')) {
   }
 }
 
-// Misskeyクライアント設定
+// Misskey Botクライアント設定
 const cli = new Misskey.api.APIClient({
   origin: MISSKEY_URL,
   credential: MISSKEY_TOKEN,
 });
+
+// Misskey User クライアント設定
+let userCli = null;
+if (USER_TOKEN) {
+  userCli = new Misskey.api.APIClient({
+    origin: MISSKEY_URL,
+    credential: USER_TOKEN,
+  });
+  console.log('[Setup] User client initialized for @n1suru posts.');
+}
 
 let botUserId;
 cli.request('i').then((res) => {
@@ -252,6 +265,7 @@ async function checkBackupCompletion() {
 
 function setupScheduledTasks() {
   console.log('[StationStaff] Setting up scheduled tasks...');
+  const timeZone = { timezone: 'Asia/Tokyo'};
 
   // 再起動予告：毎日 01:57 (Asia/Tokyo)
   cron.schedule('57 1 * * *', () => {
@@ -268,6 +282,62 @@ function setupScheduledTasks() {
   }, {
     timezone: 'Asia/Tokyo'
   });
+
+  // 追加:
+  // 1. JST0200 おにゃのこhshs
+  cron.schedule('0 2 * * *', async () => {
+    if (!userCli) return;
+    try {
+      console.log('[Cron] Posting 2:00 hshs note...');
+      await userCli.request('notes/create', {
+        text: 'かぁいいおにゃのこはすはすしたい #kawaii_onnanoko_hshs_sitai',
+        visibility: 'public'
+      });
+    } catch (err) {
+      console.error('[Cron] Failed to post 2:00 note:', err);
+    }
+  }, timeZone);
+  // 2. JST0230 2時には寝ようの歌
+  cron.schedule('30 2 * * *', async () => {
+    try {
+      console.log('[Cron] Posting 2:30 song...');
+      await cli.request('notes/create', {
+        text: '2時には寝ようの歌 #bot\nhttps://fedimovie.com/videos/watch/c49d178c-ac40-418c-8ae7-07a8e4028847', // リンクは好きなのに変えて
+        visibility: 'public'
+      });
+    } catch (err) {
+      console.error('[Cron] Failed to post 2:30 note:', err);
+    }
+  }, timeZone);
+  // 3. JST0300 大惨事
+  cron.schedule('0 3 * * *', async () => {
+    try {
+      console.log('[Cron] Posting 3:00 disaster note...');
+      await cli.request('notes/create', {
+        text: ':mou3jidashi_daisanjittekanji: #bot',
+        visibility: 'public'
+      });
+    } catch (err) {
+      console.error('[Cron] Failed to post 3:00 note:', err);
+    }
+  }, timeZone);
+  // 4. JST0400 おはよう！朝4時に何してるんだい？
+  cron.schedule('0 4 * * *', async () => {
+    if (!NIGHT_IMAGE_ID) {
+      console.log('[Cron] Skip 4:00 image post (No Image ID).');
+      return;
+    }
+    try {
+      console.log('[Cron] Posting 4:00 image note...');
+      await cli.request('notes/create', {
+        text: '#bot',
+        fileIds: [NIGHT_IMAGE_ID], // ここで画像のIDを指定する
+        visibility: 'public'
+      });
+    } catch (err) {
+      console.error('[Cron] Failed to post 4:00 note:', err);
+    }
+  }, timeZone);
 
   console.log('[StationStaff] Scheduled tasks registered.');
 }
