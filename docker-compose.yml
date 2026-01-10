@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  stationstaff-bot:
+    build: .
+    container_name: stationstaff-bot
+    restart: unless-stopped
+    environment:
+      - MISSKEY_URL=${MISSKEY_URL}
+      - MISSKEY_TOKEN=${MISSKEY_TOKEN}
+    volumes:
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,22 @@
+{
+  "name": "stationstaff-bot",
+  "version": "1.0.0",
+  "description": "Misskey bot that welcomes new users to your instance",
+  "main":  "bot.js",
+  "type": "module",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "keywords": [
+    "misskey",
+    "bot",
+    "welcome"
+  ],
+  "author": "haibala",
+  "license": "MIT",
+  "dependencies": {
+    "misskey-js": "^2024.10.1",
+    "better-sqlite3": "^11.7.0",
+    "ws":  "^8.18.0"
+  }
+}

@@ -1,0 +1,23 @@
+# Environment variables
+.env
+
+# Database
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Node modules
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
