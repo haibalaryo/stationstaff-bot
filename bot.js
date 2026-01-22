@@ -72,17 +72,14 @@ db.exec(`
 // 1. 新規ユーザー歓迎ロジック
 // ========================================
 
-async function checkNewUsers() {
-  console.log('--- [Debug] Check started ---');
-
-  try {
+try {
     const users = await cli.request('users', {
       limit: 100,
       origin: 'local',
       state: 'all'
     });
 
-    // ID順（時系列順）にソート
+    // ID順（時系列順：新しい順）にソート
     users.sort((a, b) => {
       if (a.id < b.id) return 1;
       if (a.id > b.id) return -1;
@@ -105,19 +102,35 @@ async function checkNewUsers() {
     const newUsers = [];
     for (const user of users) {
       if (user.host !== null) continue; // リモートユーザーは除外
-      if (user.id === lastCheckedUserId) break; // 前回の場所まで来たら終了
       if (user.id === botUserId) continue; // 自分自身は除外
+
+      // 以下(<=)なので前回挨拶したユーザーが削除されていても、それより古いIDが来れば止まる
+      if (user.id <= lastCheckedUserId) break; 
       
       newUsers.push(user);
     }
 
     if (newUsers.length === 0) {
-      console.log('[Debug] No NEW users found.');
+      // console.log('[Debug] No NEW users found.'); // ログ過多ならコメントアウト
+      return;
+    }
+
+    // フェイルセーフ追加
+    // もし何らかの理由で大量のユーザーがヒットした場合（DB消失やロジックエラー）、
+    // 暴走を防ぐために処理を強制中断し、基準点を最新に更新して終了
+    const SAFETY_LIMIT = 10; // 一度に挨拶する上限人数
+    
+    if (newUsers.length > SAFETY_LIMIT) {
+      console.warn(`[Welcome] ⚠️ Abnormal number of new users detected (${newUsers.length} users). Aborting to prevent spam.`);
+      console.warn(`[Welcome] Updating last_welcome_user_id to current newest: ${users[0].id}`);
+      
+      // 最新のIDまで「処理済み」としてマークして今回は何もしない
+      db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
       return;
     }
 
     // 古い順に挨拶するために反転
-    const newestUserId = newUsers[0].id;
+    const newestUserId = newUsers[0].id; // 取得した中で一番新しいIDを保存用にとっておく
     newUsers.reverse();
 
     for (const user of newUsers) {
@@ -149,7 +162,6 @@ async function checkNewUsers() {
 
   } catch (err) {
     console.error('[Welcome] Error:', err);
-  }
 }
 
 // ========================================
@@ -298,7 +310,7 @@ function setupScheduledTasks() {
     }
   }, timeZone);
   // 2. JST0230 2時には寝ようの歌
-  cron.schedule('30 2 * * *', async () => {
+  cron.schedule('31 2 * * *', async () => {
     try {
       console.log('[Cron] Posting 2:30 song...');
       await cli.request('notes/create', {
