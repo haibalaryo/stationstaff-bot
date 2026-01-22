@@ -71,97 +71,98 @@ db.exec(`
 // ========================================
 // 1. 新規ユーザー歓迎ロジック
 // ========================================
+async function checkNewUsers() {
+  try {
+      const users = await cli.request('users', {
+        limit: 100,
+        origin: 'local',
+        state: 'all'
+      });
 
-try {
-    const users = await cli.request('users', {
-      limit: 100,
-      origin: 'local',
-      state: 'all'
-    });
+      // ID順（時系列順：新しい順）にソート
+      users.sort((a, b) => {
+        if (a.id < b.id) return 1;
+        if (a.id > b.id) return -1;
+        return 0;
+      });
 
-    // ID順（時系列順：新しい順）にソート
-    users.sort((a, b) => {
-      if (a.id < b.id) return 1;
-      if (a.id > b.id) return -1;
-      return 0;
-    });
+      if (users.length === 0) return;
 
-    if (users.length === 0) return;
+      // 前回チェックした最後のユーザーIDを取得
+      const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_welcome_user_id'").get();
+      let lastCheckedUserId = stateRecord ? stateRecord.value : null;
 
-    // 前回チェックした最後のユーザーIDを取得
-    const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_welcome_user_id'").get();
-    let lastCheckedUserId = stateRecord ? stateRecord.value : null;
-
-    // 初回起動時は現在の最新ユーザーを記録して終了（過去の全員に挨拶しないため）
-    if (!lastCheckedUserId) {
-      console.log(`[Welcome] First run detected! Setting baseline to: ${users[0].id}`);
-      db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
-      return;
-    }
-
-    const newUsers = [];
-    for (const user of users) {
-      if (user.host !== null) continue; // リモートユーザーは除外
-      if (user.id === botUserId) continue; // 自分自身は除外
-
-      // 以下(<=)なので前回挨拶したユーザーが削除されていても、それより古いIDが来れば止まる
-      if (user.id <= lastCheckedUserId) break; 
-      
-      newUsers.push(user);
-    }
-
-    if (newUsers.length === 0) {
-      // console.log('[Debug] No NEW users found.'); // ログ過多ならコメントアウト
-      return;
-    }
-
-    // フェイルセーフ追加
-    // もし何らかの理由で大量のユーザーがヒットした場合（DB消失やロジックエラー）、
-    // 暴走を防ぐために処理を強制中断し、基準点を最新に更新して終了
-    const SAFETY_LIMIT = 10; // 一度に挨拶する上限人数
-    
-    if (newUsers.length > SAFETY_LIMIT) {
-      console.warn(`[Welcome] ⚠️ Abnormal number of new users detected (${newUsers.length} users). Aborting to prevent spam.`);
-      console.warn(`[Welcome] Updating last_welcome_user_id to current newest: ${users[0].id}`);
-      
-      // 最新のIDまで「処理済み」としてマークして今回は何もしない
-      db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
-      return;
-    }
-
-    // 古い順に挨拶するために反転
-    const newestUserId = newUsers[0].id; // 取得した中で一番新しいIDを保存用にとっておく
-    newUsers.reverse();
-
-    for (const user of newUsers) {
-      const welcomeText = `@${user.username} さん、${BOT_HOST} へようこそ！🎉
-
-【はじめての方へ】
-🔰 プロフィールを設定してアイコンを変えてみよう
-🎁 「@loginbonus ログボ」と呟くとログボが貰えるよ！
-📊 サーバー状況は @stationstaff で確認できるよ
-
-困ったことがあれば #質問 タグで聞いてね！
-ゆっくりしていってね！`;
-
-      try {
-        await cli.request('notes/create', {
-          text: welcomeText,
-          visibility: 'public'
-        });
-        console.log(`[Welcome] Welcomed @${user.username}`);
-      } catch (e) {
-        console.error(`[Welcome] Failed to welcome @${user.username}:`, e);
+      // 初回起動時は現在の最新ユーザーを記録して終了（過去の全員に挨拶しないため）
+      if (!lastCheckedUserId) {
+        console.log(`[Welcome] First run detected! Setting baseline to: ${users[0].id}`);
+        db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
+        return;
       }
-      // 連投制限回避のウェイト
-      await new Promise(resolve => setTimeout(resolve, 3000));
+
+      const newUsers = [];
+      for (const user of users) {
+        if (user.host !== null) continue; // リモートユーザーは除外
+        if (user.id === botUserId) continue; // 自分自身は除外
+
+        // 以下(<=)なので前回挨拶したユーザーが削除されていても、それより古いIDが来れば止まる
+        if (user.id <= lastCheckedUserId) break; 
+        
+        newUsers.push(user);
+      }
+
+      if (newUsers.length === 0) {
+        // console.log('[Debug] No NEW users found.'); // ログ過多ならコメントアウト
+        return;
+      }
+
+      // フェイルセーフ追加
+      // もし何らかの理由で大量のユーザーがヒットした場合（DB消失やロジックエラー）、
+      // 暴走を防ぐために処理を強制中断し、基準点を最新に更新して終了
+      const SAFETY_LIMIT = 10; // 一度に挨拶する上限人数
+      
+      if (newUsers.length > SAFETY_LIMIT) {
+        console.warn(`[Welcome] ⚠️ Abnormal number of new users detected (${newUsers.length} users). Aborting to prevent spam.`);
+        console.warn(`[Welcome] Updating last_welcome_user_id to current newest: ${users[0].id}`);
+        
+        // 最新のIDまで「処理済み」としてマークして今回は何もしない
+        db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', users[0].id);
+        return;
+      }
+
+      // 古い順に挨拶するために反転
+      const newestUserId = newUsers[0].id; // 取得した中で一番新しいIDを保存用にとっておく
+      newUsers.reverse();
+
+      for (const user of newUsers) {
+        const welcomeText = `@${user.username} さん、${BOT_HOST} へようこそ！🎉
+
+  【はじめての方へ】
+  🔰 プロフィールを設定してアイコンを変えてみよう
+  🎁 「@loginbonus ログボ」と呟くとログボが貰えるよ！
+  📊 サーバー状況は @stationstaff で確認できるよ
+
+  困ったことがあれば #質問 タグで聞いてね！
+  ゆっくりしていってね！`;
+
+        try {
+          await cli.request('notes/create', {
+            text: welcomeText,
+            visibility: 'public'
+          });
+          console.log(`[Welcome] Welcomed @${user.username}`);
+        } catch (e) {
+          console.error(`[Welcome] Failed to welcome @${user.username}:`, e);
+        }
+        // 連投制限回避のウェイト
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
+
+      // 状態更新
+      db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', newestUserId);
+
+    } catch (err) {
+      console.error('[Welcome] Error:', err);
     }
-
-    // 状態更新
-    db.prepare("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)").run('last_welcome_user_id', newestUserId);
-
-  } catch (err) {
-    console.error('[Welcome] Error:', err);
 }
 
 // ========================================
