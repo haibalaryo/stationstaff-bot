@@ -238,13 +238,10 @@ async function checkBackupCompletion() {
       return; // 既に通知済み
     }
 
-    // ファイルが「ここ15分以内」に作成・更新されたかチェック
-    // バックアップ処理に時間がかかる場合もあるので、少し幅を持たせる
+    // ファイルが「ここ1h以内」に作成・更新されたかチェック
     const now = new Date();
     const timeDiffMinutes = (now - fileModifiedTime) / 1000 / 60;
-
-    // 15分以内に完了したものだけ通知する（あまり古いファイルを通知しても仕方ないため）
-    if (timeDiffMinutes < 15) {
+    if (timeDiffMinutes < 60) {
       console.log(`[Backup] New backup detected: ${latestBackup}`);
 
       const fileSizeMB = (stats.size / 1024 / 1024).toFixed(2);
