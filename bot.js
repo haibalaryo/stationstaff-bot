@@ -5,6 +5,7 @@ import path from 'path';
 import cron from 'node-cron'; // ★追加
 import pkg from 'ws';
 
+const { setupAds } = require('./senden'); // 宣伝
 // WebSocketのポリフィル（Node環境でMisskey Streamingを使うため）
 const WebSocket = pkg.WebSocket || pkg.default || pkg;
 global.WebSocket = WebSocket;
@@ -281,6 +282,9 @@ async function checkBackupCompletion() {
 function setupScheduledTasks() {
   console.log('[StationStaff] Setting up scheduled tasks...');
   const timeZone = { timezone: 'Asia/Tokyo'};
+
+  // 宣伝モジュール起動
+  setupAds(cli, timeZone);
 
   // 再起動予告：毎日 03:57 (Asia/Tokyo)
   cron.schedule('57 3 * * *', () => {
