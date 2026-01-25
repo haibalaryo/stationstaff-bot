@@ -5,7 +5,7 @@ import path from 'path';
 import cron from 'node-cron'; // ★追加
 import pkg from 'ws';
 
-const { setupAds } = require('./senden'); // 宣伝
+import { setupAds } from './senden.js'; // 宣伝
 // WebSocketのポリフィル（Node環境でMisskey Streamingを使うため）
 const WebSocket = pkg.WebSocket || pkg.default || pkg;
 global.WebSocket = WebSocket;
