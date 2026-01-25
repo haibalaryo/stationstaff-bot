@@ -137,11 +137,10 @@ async function checkNewUsers() {
         const welcomeText = `@${user.username} さん、${BOT_HOST} へようこそ！🎉
 
   【はじめての方へ】
-  🔰 プロフィールを設定してアイコンを変えてみよう
-  🎁 「@loginbonus ログボ」と呟くとログボが貰えるよ！
-  📊 サーバー状況は @stationstaff で確認できるよ
+  １．プロフィールを設定してアイコンを変えてみよう
+  ２．「@loginbonus ログボ」と呟くとログボが貰えるよ！
+  ３．サーバー状況は @stationstaff で確認できるよ
 
-  困ったことがあれば #質問 タグで聞いてね！
   ゆっくりしていってね！`;
 
         try {
@@ -187,10 +186,10 @@ async function postRebootNotice() {
     await cli.request('notes/create', {
       text: `⚠️ **再起動予告** ⚠️
 
-あと3分で再起動をします。
+あと数分で再起動をします。
 サーバーにアクセスできなくなりますので、終了までしばしお待ちください。
 
-再起動時刻: 2:00
+再起動時刻: 4:00
 予定所要時間: 数分`,
       visibility: 'public'
     });
@@ -218,14 +217,17 @@ async function checkBackupCompletion() {
     }
 
     const files = fs.readdirSync(BACKUP_DIR);
-    // .dump で終わるファイルを探し、新しい順にソート
-    const dumpFiles = files.filter(f => f.endsWith('.dump')).sort().reverse();
+    
+    // 新しい順（降順）にソート
+    const backupFiles = files.filter(f => 
+      f.startsWith('misskey_full_backup_') && f.endsWith('.tar.gz')
+    ).sort().reverse();
 
-    if (dumpFiles.length === 0) {
+    if (backupFiles.length === 0) {
       return;
     }
 
-    const latestBackup = dumpFiles[0];
+    const latestBackup = backupFiles[0];
     const filePath = path.join(BACKUP_DIR, latestBackup);
     const stats = fs.statSync(filePath);
     const fileModifiedTime = stats.mtime;
@@ -241,6 +243,7 @@ async function checkBackupCompletion() {
     // ファイルが「ここ1h以内」に作成・更新されたかチェック
     const now = new Date();
     const timeDiffMinutes = (now - fileModifiedTime) / 1000 / 60;
+    
     if (timeDiffMinutes < 60) {
       console.log(`[Backup] New backup detected: ${latestBackup}`);
 
@@ -252,7 +255,9 @@ async function checkBackupCompletion() {
 
 バックアップに成功しました！
 
-📦 ファイル名: ${latestBackup}，💾 サイズ: ${fileSizeMB} MB，🕐 作成日時: ${fileModifiedTime.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`,
+📦 ファイル名: ${latestBackup}
+💾 サイズ: ${fileSizeMB} MB
+🕐 作成日時: ${fileModifiedTime.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`,
           visibility: 'public'
         });
 
@@ -277,8 +282,8 @@ function setupScheduledTasks() {
   console.log('[StationStaff] Setting up scheduled tasks...');
   const timeZone = { timezone: 'Asia/Tokyo'};
 
-  // 再起動予告：毎日 01:57 (Asia/Tokyo)
-  cron.schedule('57 1 * * *', () => {
+  // 再起動予告：毎日 03:57 (Asia/Tokyo)
+  cron.schedule('57 3 * * *', () => {
     console.log('[Cron] Reboot notice triggered.');
     postRebootNotice();
   }, {
@@ -304,7 +309,7 @@ function setupScheduledTasks() {
         visibility: 'public'
       });
     } catch (err) {
-      console.error('[Cron] Failed to post 2:00 note:', err);
+      console.error('[Cron] Failed to post 4:00 note:', err);
     }
   }, timeZone);
   // 2. JST0230 2時には寝ようの歌
