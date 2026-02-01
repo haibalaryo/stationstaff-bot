@@ -1,4 +1,5 @@
 import * as Misskey from 'misskey-js';
+import { setupDailyPostRanking } from './ranking.js';
 import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
@@ -285,6 +286,11 @@ function setupScheduledTasks() {
 
   // 宣伝モジュール起動
   setupAds(cli, timeZone);
+  // 投稿数ランキング（毎日23:45）
+  setupDailyPostRanking(cli, {
+    timeZone: 'Asia/Tokyo',
+    // calcOpts: { includeReplies: true, includeRenotes: true, excludeBots: true }
+  });
 
   // 再起動予告：毎日 03:57 (Asia/Tokyo)
   cron.schedule('57 3 * * *', () => {
