@@ -74,11 +74,13 @@ db.exec(`
 // 1. 新規ユーザー歓迎ロジック
 // ========================================
 async function checkNewUsers() {
+  console.log('[Welcome] Starting checkNewUsers...'); // 生存確認用ログ
   try {
       const users = await cli.request('users', {
         limit: 100,
         origin: 'local',
-        state: 'all'
+        state: 'all',
+        sort: '+createdAt'  // 「作成日の新しい順」にするオプションを追加
       });
 
       // ID順（時系列順：新しい順）にソート
@@ -89,6 +91,9 @@ async function checkNewUsers() {
       });
 
       if (users.length === 0) return;
+
+      // APIが見ている最新ユーザー
+      console.log(`[Debug] API Top User: ${users[0].username} (ID: ${users[0].id})`);
 
       // 前回チェックした最後のユーザーIDを取得
       const stateRecord = db.prepare("SELECT value FROM bot_state WHERE key = 'last_welcome_user_id'").get();
