@@ -196,7 +196,7 @@ async function postRebootNotice() {
 あと数分で再起動をします。
 サーバーにアクセスできなくなりますので、終了までしばしお待ちください。
 
-再起動時刻: 4:00
+再起動時刻: n分後
 予定所要時間: 数分`,
       visibility: 'public'
     });
@@ -297,13 +297,13 @@ function setupScheduledTasks() {
     // calcOpts: { includeReplies: true, includeRenotes: true, excludeBots: true }
   });
 
-  // 再起動予告：毎日 03:57 (Asia/Tokyo)
-  cron.schedule('57 3 * * *', () => {
-    console.log('[Cron] Reboot notice triggered.');
-    postRebootNotice();
-  }, {
-    timezone: 'Asia/Tokyo'
-  });
+  // 再起動予告：毎日 03:57 (Asia/Tokyo) // 投稿しない
+  // cron.schedule('57 3 * * *', () => {
+  //   console.log('[Cron] Reboot notice triggered.');
+  //   postRebootNotice();
+  // }, {
+  //   timezone: 'Asia/Tokyo'
+  // });
 
   // バックアップチェック：5分ごとに実行
   // 常に監視して、新しいファイルができたら通知するスタイル
