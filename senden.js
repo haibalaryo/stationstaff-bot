@@ -39,7 +39,7 @@ const GROOMING_POSTS = [
 #bot #注意喚起 #グルーミング対策`
     },
     {
-        cw: '「自画撮り」は犯罪になる可能性がある？',
+        cw: '「自撮り」は犯罪になる可能性がある？',
         text: `「イイね！」が欲しくて、あるいは相手に求められて、自分の裸を撮影していませんか？
 
 自分が撮影したものであっても、18歳未満の裸の画像は**「児童ポルノ」**として扱われます。
@@ -79,7 +79,7 @@ export function setupAds(cli, timezoneConfig) {
  */
 function scheduleTodaysAd(cli) {
     console.log('[Senden] Deciding AD schedule for today...');
-    // 今日呟くか (30%の確率でスキップ = 70%投稿)
+    // 今日呟くか (50%の確率でスキップ = 50%投稿)
     if (Math.random() < 0.3) {
         console.log('[Senden] Today is a skip day for Ads.');
         return;
@@ -90,13 +90,12 @@ function scheduleTodaysAd(cli) {
 
 /**
  * 今日の啓発投稿スケジュール
- * 3日に1回程度
  */
 function scheduleGroomingPost(cli) {
     console.log('[Senden] Deciding GROOMING schedule for today...');
     
-    // Math.random() が0.67以上なら投稿
-    if (Math.random() < 0.67) {
+    // Math.random() 
+    if (Math.random() < 0.2) {
         console.log('[Senden] Today is a skip day for Grooming info.');
         return;
     }
